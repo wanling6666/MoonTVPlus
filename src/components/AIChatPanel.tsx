@@ -137,6 +137,88 @@ const splitMarkdownByTables = (content: string): MarkdownSegment[] => {
   return segments;
 };
 
+const transformStrikethrough = (line: string): string => {
+  return line;
+};
+
+const transformTaskList = (line: string): string => {
+  return line.replace(/^(\s*[-*+]\s+)\[(x|X| )\]\s+/g, (_match, prefix: string, checked: string) => {
+    return `${prefix}${checked.trim() ? '☑' : '☐'} `;
+  });
+};
+
+const transformBareLinks = (line: string): string => {
+  return line.replace(/(https?:\/\/[^\s<>()]+|www\.[^\s<>()]+)/g, (match, _url: string, offset: number, source: string) => {
+    const before = source.slice(Math.max(0, offset - 2), offset);
+    const previousChar = source[offset - 1];
+    const lastOpenBracket = source.lastIndexOf('[', offset);
+    const lastCloseBracket = source.lastIndexOf(']', offset);
+    const nextCloseBracket = source.indexOf(']', offset + match.length);
+    const nextOpenParen = nextCloseBracket >= 0 ? source.slice(nextCloseBracket, nextCloseBracket + 2) : '';
+
+    // 已经是 Markdown 链接目标或链接文本时不重复转换。
+    if (before === '](' || previousChar === '<' || (lastOpenBracket > lastCloseBracket && nextOpenParen === '](')) {
+      return match;
+    }
+
+    const trailing = match.match(/[.,!?;:，。！？；：]+$/)?.[0] || '';
+    const cleanUrl = trailing ? match.slice(0, -trailing.length) : match;
+    const href = cleanUrl.startsWith('www.') ? `https://${cleanUrl}` : cleanUrl;
+
+    return `[${cleanUrl}](${href})${trailing}`;
+  });
+};
+
+const transformLightweightGfm = (content: string): string => {
+  const lines = content.split('\n');
+  let inFence = false;
+
+  return lines.map((line) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return line;
+    }
+
+    if (inFence) return line;
+
+    return transformBareLinks(transformStrikethrough(transformTaskList(line)));
+  }).join('\n');
+};
+
+const renderStrikethroughNodes = (children: React.ReactNode): React.ReactNode => {
+  return React.Children.map(children, (child) => {
+    if (typeof child === 'string') {
+      const parts: React.ReactNode[] = [];
+      const regex = /~~([^~\n]+)~~/g;
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(child)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push(child.slice(lastIndex, match.index));
+        }
+
+        parts.push(<del key={`${match.index}-${match[1]}`}>{match[1]}</del>);
+        lastIndex = match.index + match[0].length;
+      }
+
+      if (lastIndex < child.length) {
+        parts.push(child.slice(lastIndex));
+      }
+
+      return parts.length > 0 ? parts : child;
+    }
+
+    if (React.isValidElement(child) && (child as any).props?.children) {
+      return React.cloneElement(child as any, {
+        children: renderStrikethroughNodes((child as any).props.children),
+      });
+    }
+
+    return child;
+  });
+};
+
 export default function AIChatPanel({
   isOpen,
   onClose,
@@ -178,6 +260,15 @@ export default function AIChatPanel({
   };
 
   const markdownComponents = useMemo(() => ({
+    del: ({ children }: any) => <del>{children}</del>,
+    p: ({ children }: any) => <p>{renderStrikethroughNodes(children)}</p>,
+    li: ({ children }: any) => <li>{renderStrikethroughNodes(children)}</li>,
+    h1: ({ children }: any) => <h1>{renderStrikethroughNodes(children)}</h1>,
+    h2: ({ children }: any) => <h2>{renderStrikethroughNodes(children)}</h2>,
+    h3: ({ children }: any) => <h3>{renderStrikethroughNodes(children)}</h3>,
+    h4: ({ children }: any) => <h4>{renderStrikethroughNodes(children)}</h4>,
+    h5: ({ children }: any) => <h5>{renderStrikethroughNodes(children)}</h5>,
+    h6: ({ children }: any) => <h6>{renderStrikethroughNodes(children)}</h6>,
     a: ({ href, children, ...props }: any) => {
       // 如果是内部链接（以 / 开头），使用 Next.js Link
       if (href?.startsWith('/')) {
@@ -198,7 +289,7 @@ export default function AIChatPanel({
 
   const inlineMarkdownComponents = useMemo(() => ({
     ...markdownComponents,
-    p: ({ children }: any) => <span>{children}</span>,
+    p: ({ children }: any) => <span>{renderStrikethroughNodes(children)}</span>,
   }), [markdownComponents]);
 
   const renderAssistantContent = (content: string) => {
@@ -206,7 +297,7 @@ export default function AIChatPanel({
       if (segment.type === 'markdown') {
         return (
           <ReactMarkdown key={segmentIndex} components={markdownComponents}>
-            {convertTitleToLink(segment.content)}
+            {transformLightweightGfm(convertTitleToLink(segment.content))}
           </ReactMarkdown>
         );
       }
@@ -227,7 +318,7 @@ export default function AIChatPanel({
                     style={{ textAlign: segment.align[cellIndex] }}
                   >
                     <ReactMarkdown components={inlineMarkdownComponents}>
-                      {convertTitleToLink(cell)}
+                      {transformLightweightGfm(convertTitleToLink(cell))}
                     </ReactMarkdown>
                   </th>
                 ))}
@@ -246,7 +337,7 @@ export default function AIChatPanel({
                       style={{ textAlign: segment.align[cellIndex] }}
                     >
                       <ReactMarkdown components={inlineMarkdownComponents}>
-                        {convertTitleToLink(cell)}
+                        {transformLightweightGfm(convertTitleToLink(cell))}
                       </ReactMarkdown>
                     </td>
                   ))}

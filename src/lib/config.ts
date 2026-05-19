@@ -715,6 +715,13 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   if (!Array.isArray(adminConfig.OPDSConfig.Sources)) {
     adminConfig.OPDSConfig.Sources = [];
   }
+  adminConfig.OPDSConfig.Sources = adminConfig.OPDSConfig.Sources.filter((source: any) => (source?.type || 'opds') === 'opds').map((source: any) => {
+    const { legado: _legado, ...rest } = source || {};
+    return { ...rest, type: 'opds' };
+  });
+  if (!Array.isArray(adminConfig.OPDSConfig.LegadoSubscriptions)) {
+    adminConfig.OPDSConfig.LegadoSubscriptions = [];
+  }
   if (adminConfig.OPDSConfig.CacheTTL === undefined || Number.isNaN(adminConfig.OPDSConfig.CacheTTL)) {
     adminConfig.OPDSConfig.CacheTTL = Number(process.env.OPDS_CACHE_TTL_MS || 10 * 60 * 1000);
   }

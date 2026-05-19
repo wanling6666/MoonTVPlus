@@ -18,6 +18,7 @@ import {
   LegadoBookSourceRule,
 } from './book.types';
 import { validateProxyUrlServerSide } from './server/ssrf';
+import { legadoSubscriptionStore } from './legado/subscription-store';
 
 interface ResolvedLegadoConfig {
   enabled: boolean;
@@ -316,11 +317,8 @@ async function resolveLegadoConfig(): Promise<ResolvedLegadoConfig> {
     const config = await getConfig();
     if (config.OPDSConfig) {
       enabled = config.OPDSConfig.Enabled ?? enabled;
-      if (Array.isArray(config.OPDSConfig.Sources)) {
-        sources = (config.OPDSConfig.Sources as BookSource[])
-          .map((source, index) => normalizeConfiguredLegadoSource(source, index))
-          .filter((source): source is BookSource => !!source);
-      }
+      const subscriptionSources = await legadoSubscriptionStore.getSourcesForSubscriptions(config.OPDSConfig.LegadoSubscriptions || []);
+      sources = [...sources, ...subscriptionSources];
     }
   } catch {}
 
@@ -378,8 +376,9 @@ function wait(ms: number) {
 }
 
 async function fetchText(source: BookSource, url: string): Promise<string> {
+  if (!url?.trim()) throw new Error('书源请求地址为空');
   const safe = await validateProxyUrlServerSide(url);
-  if (!safe) throw new Error('书源地址未通过安全校验');
+  if (!safe) throw new Error(`书源地址未通过安全校验: ${url}`);
   const cacheKey = `${LEGADO_CACHE_VERSION}|text|${source.id}|${url}`;
   const cached = textCache.get(cacheKey);
   const { cacheTTL } = await resolveLegadoConfig();
@@ -508,6 +507,7 @@ export class LegadoClient {
           if (dedupeKey && seen.has(dedupeKey)) return;
           if (dedupeKey) seen.add(dedupeKey);
           results.push(makeItem(source, {
+            id: detailHref || undefined,
             title,
             author: readValue($, root, rule.ruleSearch?.author, targetUrl),
             summary: readValue($, root, rule.ruleSearch?.intro, targetUrl),
@@ -554,13 +554,16 @@ export class LegadoClient {
     const source = await getSourceById(sourceId);
     const rule = getRule(source);
     const base = sourceBase(source);
-    const detailHref = rule.ruleSearch?.bookUrl
-      ? normalizeUrl(base, rule.ruleSearch.bookUrl
-        .replace(/\{\{\s*\$\.id\s*\}\}/g, encodeURIComponent(bookId))
-        .replace(/\{\{\s*id\s*\}\}/g, encodeURIComponent(bookId))
-        .replace(/\{id\}/g, encodeURIComponent(bookId)))
-      : '';
-    if (!detailHref) throw new Error('该 Legado 书源无法通过 bookId 定位详情');
+    const searchBookUrlRule = rule.ruleSearch?.bookUrl || '';
+    const detailHref = /^https?:\/\//i.test(bookId) || bookId.startsWith('/')
+      ? normalizeUrl(base, bookId)
+      : /\{\{\s*(?:\$\.id|id)\s*\}\}|\{id\}/.test(searchBookUrlRule)
+        ? normalizeUrl(base, searchBookUrlRule
+          .replace(/\{\{\s*\$\.id\s*\}\}/g, encodeURIComponent(bookId))
+          .replace(/\{\{\s*id\s*\}\}/g, encodeURIComponent(bookId))
+          .replace(/\{id\}/g, encodeURIComponent(bookId)))
+        : '';
+    if (!detailHref) throw new Error('该 Legado 书源无法通过 bookId 定位详情，请重新搜索后打开');
     const detail = await this.getBookDetail(sourceId, detailHref, { id: bookId, detailHref });
     const tocHref = detail.acquisitionLinks.find((item) => item.rel === 'legado:chapters' || item.type.toLowerCase().includes('legado-chapters'))?.href;
     if (!tocHref) return [];

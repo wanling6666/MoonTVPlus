@@ -4,6 +4,26 @@
 // 检测是否为 Cloudflare Pages 构建
 const isCloudflare = process.env.CF_PAGES === '1' || process.env.BUILD_TARGET === 'cloudflare';
 
+const optimizedPackageImports = [
+  '@dnd-kit/core',
+  '@dnd-kit/modifiers',
+  '@dnd-kit/sortable',
+  '@dnd-kit/utilities',
+];
+
+const serverExternalPackages = [
+  '@upstash/redis',
+  '@vercel/postgres',
+  'better-sqlite3',
+  'cheerio',
+  'nodemailer',
+  'pg',
+  'redis',
+  'socket.io',
+  'xml2js',
+  'xpath',
+];
+
 const nextConfig = {
   // Cloudflare Pages 不支持 standalone，使用默认输出
   output: isCloudflare ? undefined : 'standalone',
@@ -18,6 +38,9 @@ const nextConfig = {
 
   experimental: {
     instrumentationHook: process.env.NODE_ENV === 'production' && !isCloudflare,
+    optimizePackageImports: optimizedPackageImports,
+    serverComponentsExternalPackages: serverExternalPackages,
+    webpackBuildWorker: true,
   },
 
   // Uncoment to add domain whitelist
